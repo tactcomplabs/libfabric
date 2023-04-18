@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2013-2016 Intel Corporation. All rights reserved.
+ * Copyright (c) 2023 Tactical Computing Labs, LLC. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -296,7 +297,7 @@ ofi_cpuid(unsigned func, unsigned subfunc, unsigned cpuinfo[4])
 #define ofi_sfence() asm volatile("sfence" ::: "memory")
 
 #elif ( defined(__riscv) && defined(__riscv_xlen) && (__riscv_xlen == 64) && (defined(__linux__) || defined(__APPLE__)) )
-/*
+
 #include <stdio.h>
 #include <regex.h>
 
@@ -328,8 +329,7 @@ ofi_cpuid(unsigned func, unsigned subfunc, unsigned cpuinfo[4])
      cpuinfo[2] = hart & 0x00FF0000;
      cpuinfo[3] = hart & 0xFF000000;
 }
-*/
-#define ofi_cpuid(func, subfunc, cpuinfo)
+
 #define ofi_clwb(addr)
 #define ofi_clflushopt(addr)
 #define ofi_clflush(addr)

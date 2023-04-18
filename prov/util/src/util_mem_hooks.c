@@ -17,6 +17,7 @@
  * Copyright (c) 2016-2020 IBM Corporation.  All rights reserved.
  * Copyright (c) 2019 Intel Corporation, Inc.  All rights reserved.
  * Copyright (c) 2020 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2023 Tactical Computing Labs, LLC. All rights reserved.
  *
  * License text from Open-MPI (www.open-mpi.org/community/license.php)
  *
