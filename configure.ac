@@ -770,7 +770,7 @@ AC_DEFINE_UNQUOTED(ENABLE_UFFD_MONITOR, [$enable_uffd],
 
 
 AH_BOTTOM([
-#if defined(__linux__) && (defined(__x86_64__) || defined(__amd64__) || defined(__aarch64__)) && ENABLE_MEMHOOKS_MONITOR
+#if defined(__linux__) && (defined(__x86_64__) || defined(__amd64__) || defined(__aarch64__) || (defined(__riscv) && __riscv_xlen == 64)) && ENABLE_MEMHOOKS_MONITOR
 #define HAVE_MEMHOOKS_MONITOR 1
 #else
 #define HAVE_MEMHOOKS_MONITOR 0
