@@ -17,6 +17,7 @@
  * Copyright (c) 2016-2020 IBM Corporation.  All rights reserved.
  * Copyright (c) 2019 Intel Corporation, Inc.  All rights reserved.
  * Copyright (c) 2020 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2023 Tactical Computing Labs, LLC. All rights reserved.
  *
  * License text from Open-MPI (www.open-mpi.org/community/license.php)
  *
@@ -176,7 +177,7 @@ static inline void ofi_clear_instruction_cache(uintptr_t address, size_t data_si
 {
 	size_t i;
 	size_t offset_jump = 16;
-#if defined(__aarch64__)
+#if (defined(__aarch64__) || (defined(__riscv) && (__riscv_xlen == 64)))
 	offset_jump = 32;
 #endif
 	/* align the address */
@@ -186,12 +187,15 @@ static inline void ofi_clear_instruction_cache(uintptr_t address, size_t data_si
 #if (defined(__x86_64__) || defined(__amd64__))
 		__asm__ volatile("mfence;clflush %0;mfence"::
 				 "m" (*((char*) address + i)));
-#elif defined(__aarch64__)
+#elif (defined(__aarch64__)
 		__asm__ volatile ("dc cvau, %0\n\t"
 			  "dsb ish\n\t"
 			  "ic ivau, %0\n\t"
 			  "dsb ish\n\t"
 			  "isb":: "r" (address + i));
+#elif (defined(__riscv) && (__riscv_xlen == 64)
+	        __riscv_flush_icache(address, address+data_size, SYS_RISCV_FLUSH_ICACHE_LOCAL);
+		__asm__ volatile ("fence.i\n");
 #endif
 	}
 }
@@ -371,6 +375,85 @@ static bool ofi_is_function_patched(struct ofi_intercept *intercept)
         ((*(uint32_t *) (addr +  8)) & mov_mask) == movk(0, 1, 0) &&
         ((*(uint32_t *) (addr + 12)) & mov_mask) == movk(0, 0, 0) &&
         ((*(uint32_t *) (addr + 16)) & br_mask) == br(0)
+	);
+}
+#elif (defined(__riscv) && defined(__riscv_xlen) && (__riscv_xlen == 64))
+
+/* Registers numbers to use with the move immediate to register.
+ * The destination register is X31 (highest temporary).
+ * Register X28-X30 are used for block shifting and masking.
+ * Register X0 is always zero
+ */
+#define X31 31
+#define X30 30
+#define X0  0
+
+/**
+ * @brief JALR - Add 12 bit immediate to source register, save to destination register, jump and link from destination register
+ *
+ * @param[in] _reg  register number (0-31), @param[out] _reg register number (0-31), @param[imm] 12 bit immmediate value
+ */
+#define JALR(_regs, _regd, _imm) (((_imm) << 20) | ((_regs) << 15) | (0b000 << 12) | ((_regd) << 7) | (0x67))
+
+/**
+ * @brief ADDI - Add 12 bit immediate to source register, save to destination register 
+ *
+ * @param[in] _reg  register number (0-31), @param[out] _reg register number (0-31), @param[imm] 12 bit immmediate value
+ */
+#define ADDI(_regs, _regd, _imm) (((_imm) << 20) | ((_regs) << 15) | (0b000 << 12) | ((_regd) << 7) | (0x13))
+#define ADD(_regs_a, _regs_b, _regd) ((_regs_b << 20) | (_regs_a << 15) | (0b000 << 12) | ((_regd) << 7) | (0x33))
+
+/**
+ * @brief LUI - load upper 20 bit immediate to destination register
+ *
+ * @param[in] _reg  register number (0-31), @param[out] _reg register number (0-31), @param[imm] 12 bit immmediate value
+ */
+#define LUI(_regd, _imm) (((_imm) << 12) | ((_regd) << 7) | (0x37))
+
+/**
+ * @brief SLLI - left-shift immediate number of bits in source register into destination register
+ *
+ * @param[in] _reg  register number (0-31), @param[out] _reg register number (0-31), @param[imm] 12 bit immmediate value
+ */
+#define SLLI(_regs, _regd, _imm) (((_imm) << 20) | ((_regs) << 15) | (0b001 << 12) | ((_regd) << 7) | (0x13))
+
+static int ofi_patch_function(struct ofi_intercept *intercept)
+{
+    /*
+     * r15 is the highest numbered temporary register. I am
+     * assuming this one is safe to use.
+     */
+    uintptr_t addr = (uintptr_t) intercept->patch_data;
+    uintptr_t value = (uintptr_t) intercept->our_func;
+
+    *(uint32_t*) (addr +  0) = LUI  (X31, ((0xFFFFF << 12) & ( ((value) >> 32) + 1 ) ) >> 12);
+    *(uint32_t*) (addr +  4) = ADDI (X31, X31, ((0xFFF)    & ( ((value) >> 32) + 1 ) )      );
+    *(uint32_t*) (addr +  8) = LUI  (X30, ((0xFFFFF << 12) & ( (((value)) + 1)     ) ) >> 12);
+    *(uint32_t*) (addr + 12) = SLLI (X31, X31, 32);
+    *(uint32_t*) (addr + 16) = ADD  (X30, X31, X31);
+    *(uint32_t*) (addr + 20) = JALR (X31, X0, ((0xFFF)     & ( ((value)) + 1)));
+
+    intercept->patch_data_size = 24;
+
+    return ofi_apply_patch(intercept);
+}
+
+/*
+ * Please see comments at other ofi_is_function_patched() function
+ */
+static bool ofi_is_function_patched(struct ofi_intercept *intercept)
+{
+    uintptr_t addr = (uintptr_t) intercept->orig_func;
+    /*
+     * focus on the instructions in the bytes.
+     */
+    return (
+        ((*(uint32_t *) (addr +  0)) & 0xFF) == 0x37 &&
+        ((*(uint32_t *) (addr +  4)) & 0xFF) == 0x13 &&
+        ((*(uint32_t *) (addr +  8)) & 0xFF) == 0x37 &&
+        ((*(uint32_t *) (addr + 12)) & 0xFF) == 0x13 &&
+        ((*(uint32_t *) (addr + 16)) & 0xFF) == 0x33 &&
+        ((*(uint32_t *) (addr + 20)) & 0xFF) == 0x67
 	);
 }
 #endif

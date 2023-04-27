@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2013-2016 Intel Corporation. All rights reserved.
+ * Copyright (c) 2023 Tactical Computing Labs, LLC. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -295,7 +296,46 @@ ofi_cpuid(unsigned func, unsigned subfunc, unsigned cpuinfo[4])
 	asm volatile("clflush %0" : "+m" (*(volatile char *) addr))
 #define ofi_sfence() asm volatile("sfence" ::: "memory")
 
-#else /* defined(__x86_64__) || defined(__amd64__) */
+#elif ( defined(__riscv) && defined(__riscv_xlen) && (__riscv_xlen == 64) && (defined(__linux__) || defined(__APPLE__)) )
+
+#include <stdio.h>
+#include <regex.h>
+
+static inline void
+ofi_cpuid(unsigned func, unsigned subfunc, unsigned cpuinfo[4])
+{
+     FILE *f = fopen("/proc/cpuinfo", "r");
+
+     regex_t r;
+     regmatch_t  match[1];
+
+     regcomp(&r, "hart", 0);
+     unsigned int hart = 0;
+     size_t lsz = 1024;
+     char *line = malloc(1024);
+     size_t rc = getline(&line, &lsz, f);
+     while(rc != -1 && 0 < rc) {
+         if(!regexec(&r, line, sizeof(match) / sizeof(match[0]), match, 0)) {
+            hart+=1;
+         }
+         
+         rc = getline(&line, &lsz, f);
+     }
+
+     regfree(&r);
+
+     cpuinfo[0] = hart & 0x000000FF;
+     cpuinfo[1] = hart & 0x0000FF00;
+     cpuinfo[2] = hart & 0x00FF0000;
+     cpuinfo[3] = hart & 0xFF000000;
+}
+
+#define ofi_clwb(addr)
+#define ofi_clflushopt(addr)
+#define ofi_clflush(addr)
+#define ofi_sfence() asm volatile("fence w,w" ::: "memory")
+
+#else /* defined(__x86_64__) || defined(__amd64__) || defined(__riscv) */
 
 #define ofi_cpuid(func, subfunc, cpuinfo)
 #define ofi_clwb(addr)
